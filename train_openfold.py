@@ -1,17 +1,13 @@
 import argparse
 import logging
 import os
-import random
 import sys
-import time
 
-import numpy as np
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks.lr_monitor import LearningRateMonitor
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.plugins.training_type import DeepSpeedPlugin, DDPPlugin
-from pytorch_lightning.plugins.environments import SLURMEnvironment
+from pytorch_lightning.strategies import DeepSpeedStrategy, DDPStrategy
 import torch
 
 from openfold.config import model_config
@@ -22,7 +18,6 @@ from openfold.data.data_modules import (
 from openfold.model.model import AlphaFold
 from openfold.model.torchscript import script_preset_
 from openfold.np import residue_constants
-from openfold.utils.argparse import remove_arguments
 from openfold.utils.callbacks import (
     EarlyStoppingVerbose,
 )
@@ -139,7 +134,7 @@ class OpenFoldWrapper(pl.LightningModule):
 
         self._log(loss_breakdown, batch, outputs, train=False)
         
-    def validation_epoch_end(self, _):
+    def on_validation_epoch_end(self, _):
         # Restore the model weights to normal
         self.model.load_state_dict(self.cached_weights)
         self.cached_weights = None
@@ -346,14 +341,14 @@ def main(args):
         loggers.append(wdb_logger)
 
     if(args.deepspeed_config_path is not None):
-        strategy = DeepSpeedPlugin(
+        strategy = DeepSpeedStrategy(
             config=args.deepspeed_config_path,
         )
         if(args.wandb):
             wdb_logger.experiment.save(args.deepspeed_config_path)
             wdb_logger.experiment.save("openfold/config.py")
     elif (args.gpus is not None and args.gpus > 1) or args.num_nodes > 1:
-        strategy = DDPPlugin(find_unused_parameters=False)
+        strategy = DDPStrategy(find_unused_parameters=False)
     else:
         strategy = None
  
@@ -362,13 +357,17 @@ def main(args):
         os.system(f"{sys.executable} -m pip freeze > {freeze_path}")
         wdb_logger.experiment.save(f"{freeze_path}")
 
-    trainer = pl.Trainer.from_argparse_args(
-        args,
-        default_root_dir=args.output_dir,
-        strategy=strategy,
-        callbacks=callbacks,
-        logger=loggers,
-    )
+    trainer_kws = set([
+        'accelerator', 'strategy', 'devices', 'num_nodes', 'precision', 'logger', 'callbacks', 'fast_dev_run', 'max_epochs', 'min_epochs', 'max_steps', 'min_steps', 'max_tim', 'limit_train_batches', 'limit_val_batches', 'limit_test_batches', 'limit_predict_batches', 'overfit_batches', 'val_check_interval', 'check_val_every_n_epoch', 'num_sanity_val_steps', 'log_every_n_steps', 'enable_checkpointing', 'enable_progress_bar', 'enable_model_summary', 'accumulate_grad_batches', 'gradient_clip_val', 'gradient_clip_algorithm', 'deterministic', 'benchmark', 'inference_mode', 'use_distributed_sampler', 'profiler', 'detect_anomaly', 'barebones', 'plugins', 'sync_batchnorm', 'reload_dataloaders_every_n_epochs', 'default_root_dir',
+    ])
+    trainer_args = {k: v for k, v in vars(args).items() if k in trainer_kws}
+    trainer_args.update({
+        'default_root_dir': args.output_dir,
+        'strategy': strategy,
+        'callbacks': callbacks,
+        'logger': loggers,
+    })
+    trainer = pl.Trainer(**trainer_args)
 
     if(args.resume_model_weights_only):
         ckpt_path = None
@@ -567,23 +566,44 @@ if __name__ == "__main__":
         "--distillation_alignment_index_path", type=str, default=None,
         help="Distillation alignment index. See the README for instructions."
     )
-    parser = pl.Trainer.add_argparse_args(parser)
-   
-    # Disable the initial validation pass
-    parser.set_defaults(
-        num_sanity_val_steps=0,
+    parser.add_argument(
+        "--num_nodes", type=int, default=1,
     )
+    parser.add_argument(
+        "--gpus", type=int, default=1,
+    )
+    parser.add_argument(
+        "--precision", type=str, default=None,
+    )
+    parser.add_argument(
+        "--replace_sampler_ddp", type=bool_type, default=True,
+    )
+    parser.add_argument(
+        "--max_epochs", type=int, default=1,
+    )
+    parser.add_argument(
+        "--log_every_n_steps", type=int, default=25,
+    )
+    parser.add_argument(
+        "--num_sanity_val_steps", type=int, default=0,
+    )
+    # parser = pl.Trainer.add_argparse_args(parser)
+   
+    # # Disable the initial validation pass
+    # parser.set_defaults(
+    #     num_sanity_val_steps=0,
+    # )
 
-    # Remove some buggy/redundant arguments introduced by the Trainer
-    remove_arguments(
-        parser, 
-        [
-            "--accelerator", 
-            "--resume_from_checkpoint",
-            "--reload_dataloaders_every_epoch",
-            "--reload_dataloaders_every_n_epochs",
-        ]
-    ) 
+    # # Remove some buggy/redundant arguments introduced by the Trainer
+    # remove_arguments(
+    #     parser, 
+    #     [
+    #         "--accelerator", 
+    #         "--resume_from_checkpoint",
+    #         "--reload_dataloaders_every_epoch",
+    #         "--reload_dataloaders_every_n_epochs",
+    #     ]
+    # ) 
 
     args = parser.parse_args()
 

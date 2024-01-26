@@ -406,7 +406,7 @@ config = mlc.ConfigDict(
                 "max_extra_msa": 1024,
                 "max_template_hits": 4,
                 "max_templates": 4,
-                "shuffle_top_k_prefiltered": 20,
+                "shuffle_top_k_prefiltered": None,
                 "crop": True,
                 "crop_size": 256,
                 "supervised": True,
@@ -419,7 +419,7 @@ config = mlc.ConfigDict(
                 "use_small_bfd": False,
                 "data_loaders": {
                     "batch_size": 1,
-                    "num_workers": 16,
+                    "num_workers": 2,
                     "pin_memory": True,
                 },
             },
@@ -431,7 +431,7 @@ config = mlc.ConfigDict(
             "chunk_size": chunk_size,
             # Use DeepSpeed memory-efficient attention kernel. Mutually
             # exclusive with use_lma and use_flash.
-            "use_deepspeed_evo_attention": False,
+            "use_deepspeed_evo_attention": True,
             # Use Staats & Rabe's low-memory attention algorithm. Mutually
             # exclusive with use_deepspeed_evo_attention and use_flash.
             "use_lma": False,
